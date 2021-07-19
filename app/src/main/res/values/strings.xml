@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">BussInfoApp</string>
+    <string name="title_activity_buss_maps">Map</string>
+</resources>
