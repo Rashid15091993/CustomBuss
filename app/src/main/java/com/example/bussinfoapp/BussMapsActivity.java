@@ -1,6 +1,7 @@
 package com.example.bussinfoapp;
 
 import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
 
@@ -37,8 +38,13 @@ import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
+
+import java.util.List;
 
 public class BussMapsActivity extends FragmentActivity implements OnMapReadyCallback {
 
@@ -50,10 +56,12 @@ public class BussMapsActivity extends FragmentActivity implements OnMapReadyCall
     FusedLocationProviderClient fusedLocationProviderClient;
     LocationRequest locationRequest;
 
-    Marker userLocationMarker;
-    Circle userLocationAccuracyCircle;
+    private DatabaseReference assignedCustomRef, AssignedCustomPositionRef;
+    private String driverID, customID = "";
 
-    private String driverID;
+    private ValueEventListener AssignedCustomPositionListener;
+    Marker PickUpMarker;
+
 
 
     private FirebaseAuth mAuth;
@@ -75,111 +83,91 @@ public class BussMapsActivity extends FragmentActivity implements OnMapReadyCall
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
-        geocoder = new Geocoder(this);
+
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
 
         locationRequest = LocationRequest.create();
         locationRequest.setInterval(500);
         locationRequest.setFastestInterval(500);
         locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+
+
     }
 
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
-        zoomToUserLocation();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
 
-    }
-
-    LocationCallback locationCallback = new LocationCallback() {
-        @Override
-        public void onLocationResult(@NonNull LocationResult locationResult) {
-            super.onLocationResult(locationResult);
-            Log.d("T", "onLocationResult " + locationResult.getLastLocation());
-            if(mMap != null) {
-                setUserLocationMarker(locationResult.getLastLocation());
-
-
-            }
+            return;
         }
-    };
-
-    private void setUserLocationMarker(Location location) {
-        LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
-        if(userLocationMarker == null) {
-            //Create a new market
-            MarkerOptions markerOptions = new MarkerOptions();
-            markerOptions.position(latLng);
-            markerOptions.rotation(location.getBearing());
-            markerOptions.anchor((float)0.5, (float)0.5);
-            userLocationMarker = mMap.addMarker(markerOptions);
-            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 17));
-        }
-        else{
-            userLocationMarker .setPosition(latLng);
-            userLocationMarker.setRotation(location.getBearing());
-            mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 17));
-        }
-
-        if(userLocationAccuracyCircle == null) {
-            CircleOptions circleOptions = new CircleOptions();
-            circleOptions.center(latLng);
-            circleOptions.strokeWidth(4);
-            circleOptions.strokeColor(Color.argb(255,255,0,0));
-            circleOptions.fillColor(Color.argb(32,255,0,0));
-            circleOptions.radius(location.getAccuracy());
-            userLocationAccuracyCircle = mMap.addCircle(circleOptions);
-        }
-        else {
-            userLocationAccuracyCircle.setCenter(latLng);
-            userLocationAccuracyCircle.setRadius(location.getAccuracy());
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private void startLocationUpdates(){
-        fusedLocationProviderClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
-    }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED){
-            startLocationUpdates();
-        }
-        else{
-
-        }
-
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        stopLocationUpdates();
-    }
-
-    private void stopLocationUpdates(){
-        fusedLocationProviderClient.removeLocationUpdates(locationCallback);
-
-    }
-
-    @SuppressLint("MissingPermission")
-    private void enableUserLocation() {
         mMap.setMyLocationEnabled(true);
+        AssignedBussDriversPosition();
+
     }
-    @SuppressLint("MissingPermission")
-    private void zoomToUserLocation() {
-        Task<Location> locationTask = fusedLocationProviderClient.getLastLocation();
-        locationTask.addOnSuccessListener(new OnSuccessListener<Location>() {
+
+    private void getAssignedCustomRequest() {
+        assignedCustomRef = FirebaseDatabase.getInstance().getReference().child("Users")
+                .child(driverID);
+
+        assignedCustomRef.addValueEventListener(new ValueEventListener() {
             @Override
-            public void onSuccess(Location location) {
-                LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
-                mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 10));
-                mMap.addMarker(new MarkerOptions().position(latLng));
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                if(snapshot.exists()) {
+                    customID = snapshot.getValue().toString();
+
+                    AssignedBussDriversPosition();
+
+                }
+                else {
+                    customID = "";
+
+                    if(PickUpMarker != null) {
+                        PickUpMarker.remove();
+                    }
+                    if(AssignedCustomPositionListener != null) {
+                        AssignedCustomPositionRef.removeEventListener(AssignedCustomPositionListener);
+                    }
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
 
             }
         });
     }
+
+    private void AssignedBussDriversPosition() {
+        AssignedCustomPositionRef = FirebaseDatabase.getInstance().getReference().child("Custom Requests")
+                .child(customID).child("l");
+
+        AssignedCustomPositionListener = AssignedCustomPositionRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                if (snapshot.exists()) {
+                    List<Object> customerPositionMap = (List<Object>) snapshot.getValue();
+                    double LocationLat = LocationLat = Double.parseDouble(customerPositionMap.get(0).toString());
+                    ;
+                    double LocationLng = LocationLng = Double.parseDouble(customerPositionMap.get(1).toString());
+
+                    LatLng DriverLatLng = new LatLng(LocationLat, LocationLng);
+
+                    PickUpMarker = mMap.addMarker(new MarkerOptions().position(DriverLatLng)
+                            .title("Забрать клиента тут").icon(BitmapDescriptorFactory.fromResource(R.drawable.user)));
+                    mMap.moveCamera(CameraUpdateFactory.newLatLng(DriverLatLng));
+                    mMap.animateCamera(CameraUpdateFactory.zoomTo(16));
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+
+            }
+        });
+
+    }
+
+
 
 }
